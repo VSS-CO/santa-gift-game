@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Santa Gift Catcher — Levels, Snow, Sound</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --w:480px; --h:720px; }
+  html,body{height:100%;margin:0;background:linear-gradient(#062,#011);font-family:system-ui,Arial;}
+  .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:18px;}
+  #gameWrap{ position: relative; width:var(--w); max-width:100%; height:var(--h); }
+
+  /* Snow canvas behind */
+  #snowCanvas{ position:absolute; left:0; top:0; width:100%; height:100%; z-index:1; pointer-events:none; }
+
+  /* Game board */
+  #game {
+    position:absolute; left:0; top:0;
+    width:100%; height:100%;
+    background:linear-gradient(#072,#001);
+    border-radius:14px; border:4px solid #fff;
+    overflow:hidden; box-shadow:0 18px 40px rgba(0,0,0,.6);
+    z-index:3;
+    touch-action:manipulation;
+  }
+
+  /* HUD */
+  #hud { position:absolute; top:12px; left:12px; right:12px; display:flex; justify-content:space-between; z-index:20; pointer-events:none; }
+  #score, #lives { color:#fff; font-weight:700; text-shadow:0 2px 6px #000; font-size:20px; background:rgba(0,0,0,0.16); padding:6px 10px; border-radius:10px; pointer-events:auto;}
+  #score{ pointer-events:none; }
+
+  /* Santa (emoji) */
+  #santa {
+    position:absolute; bottom:18px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; justify-content:center; user-select:none; pointer-events:none;
+    transition: left 0.08s linear;
+    z-index:10;
+  }
+
+  /* gift */
+  .gift { position:absolute; top:-120px; display:flex; align-items:center; justify-content:center; user-select:none; z-index:9; }
+
+  /* Start / Over menu */
+  .overlay {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)); z-index:40; color:white;
+  }
+  .menu {
+    width:86%; max-width:420px; background:linear-gradient(#0b3,#024); border-radius:12px; padding:18px;
+    box-shadow:0 10px 30px rgba(0,0,0,.6); text-align:center;
+  }
+  .menu h1{ margin:2px 0 8px; font-size:28px; letter-spacing:0.6px; }
+  .menu p{ color:#e7f7e7; opacity:.95; margin:8px 0 14px; }
+  .btn { background:#fff; color:#022; padding:10px 14px; border-radius:10px; margin:6px; cursor:pointer; font-weight:700; border:none; }
+  .btn:hover{ transform:translateY(-2px); }
+  .levelBtn { background:rgba(255,255,255,0.12); color:#fff; border:2px solid rgba(255,255,255,0.12); padding:10px 12px; margin:6px; border-radius:10px; cursor:pointer; }
+  .levelBtn.active { background:#fff; color:#023; border-color:#fff; }
+
+  /* Game over */
+  #gameOverBox .scoreBig{ font-size:28px; margin:10px 0; }
+
+  @media (max-width:520px){
+    :root{ --w:360px; --h:640px; }
+    .menu h1{ font-size:22px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="gameWrap">
+    <canvas id="snowCanvas"></canvas>
+
+    <div id="game" tabindex="0" aria-label="Santa gift catcher game">
+      <div id="hud">
+        <div id="score">🎁 Score: 0</div>
+        <div id="lives">❤ Lives: 3</div>
+      </div>
+
+      <div id="santa" style="width:96px;height:96px;font-size:70px;">🎅</div>
+      <!-- gifts will be appended here -->
+    </div>
+
+    <!-- Start Menu -->
+    <div id="startMenu" class="overlay">
+      <div class="menu">
+        <h1>Santa Gift Catcher</h1>
+        <p>Catch the falling gifts! Choose a level to start. Use ← → keys or tap left/right.</p>
+
+        <div style="margin-bottom:12px;">
+          <button class="levelBtn" data-level="easy">Easy — Very Slow</button>
+          <button class="levelBtn active" data-level="normal">Normal — Slow</button>
+          <button class="levelBtn" data-level="hard">Hard — Faster</button>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <button class="btn" id="startBtn">▶ Start Game</button>
+        </div>
+
+        <div style="display:flex;justify-content:center;gap:8px;align-items:center;">
+          <label style="font-size:13px;opacity:.9">Sound</label>
+          <input type="checkbox" id="soundToggle" checked />
+          <label style="font-size:13px;margin-left:8px;opacity:.9">Snow</label>
+          <input type="checkbox" id="snowToggle" checked />
+        </div>
+      </div>
+    </div>
+
+    <!-- Game Over Menu (hidden) -->
+    <div id="gameOver" class="overlay" style="display:none;">
+      <div class="menu" id="gameOverBox">
+        <h1>🎄 Game Over</h1>
+        <div class="scoreBig" id="finalScore">Score: 0</div>
+        <p>Nice try! Want to play again?</p>
+        <div>
+          <button class="btn" id="restartBtn">🔁 Restart</button>
+          <button class="btn" id="homeBtn">🏠 Menu</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ===========================
+   Game variables & defaults
+   =========================== */
+
+const game = document.getElementById('game');
+const santa = document.getElementById('santa');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const snowCanvas = document.getElementById('snowCanvas');
+const ctx = snowCanvas.getContext('2d');
+
+const startMenu = document.getElementById('startMenu');
+const gameOverMenu = document.getElementById('gameOver');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const homeBtn = document.getElementById('homeBtn');
+const levelBtns = document.querySelectorAll('.levelBtn');
+const soundToggle = document.getElementById('soundToggle');
+const snowToggle = document.getElementById('snowToggle');
+
+let GAME_W = 480, GAME_H = 720;
+let santaX = (GAME_W - 96) / 2;
+let santaSize = 96;
+let santaEmojiSize = 70;
+let score = 0;
+let lives = 3;
+
+let spawnInterval = 1400;   // ms
+let fallSpeed = 2.8;        // px per frame
+let giftSize = 60;
+let spawnHandle = null;
+let active = false;         // true while playing
+
+const giftEmojis = ['🎁','🍬','🔔','⭐','🧸','🎀','🍭'];
+
+/* WebAudio for sounds */
+let audioCtx = null;
+function ensureAudio() {
+  if(!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+function playBeep(freq=440, time=0.06, type='sine', vol=0.18) {
+  if(!soundToggle.checked) return;
+  ensureAudio();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.value = vol;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + time);
+  o.stop(audioCtx.currentTime + time + 0.02);
+}
+function playCatch() { playBeep(880, 0.08, 'sine', 0.12); }
+function playMiss() { playBeep(240, 0.12, 'triangle', 0.16); }
+function playStart() { playBeep(660, 0.12, 'sawtooth', 0.14); }
+
+/* ===========================
+   Level presets
+   =========================== */
+const LevelPresets = {
+  easy:   { spawnInterval: 2000, fallSpeed: 1.6, santaScale: 1.05, giftSize: 56, lives: 5 },
+  normal: { spawnInterval: 1400, fallSpeed: 2.8, santaScale: 1.0, giftSize: 60, lives: 4 },
+  hard:   { spawnInterval: 900,  fallSpeed: 3.6, santaScale: 1.15, giftSize: 70, lives: 3 }
+};
+let chosenLevel = 'normal';
+
+/* ===========================
+   Responsive sizing & canvas
+   =========================== */
+function resizeGame() {
+  const rect = game.getBoundingClientRect();
+  GAME_W = Math.round(rect.width);
+  GAME_H = Math.round(rect.height);
+  // position santa relative to left
+  santa.style.left = santaX + 'px';
+  // snow canvas sizing
+  snowCanvas.width = GAME_W;
+  snowCanvas.height = GAME_H;
+}
+window.addEventListener('resize', resizeGame);
+resizeGame();
+
+/* ===========================
+   Snow (behind game) — gentle
+   =========================== */
+let snowflakes = [];
+const MAX_SNOW = 90;
+function initSnow() {
+  snowflakes = [];
+  for(let i=0;i<MAX_SNOW;i++){
+    snowflakes.push({
+      x: Math.random() * GAME_W,
+      y: Math.random() * GAME_H,
+      r: Math.random() * 3 + 0.8,
+      v: Math.random() * 0.9 + 0.2,
+      drift: (Math.random()-0.5) * 0.5
+    });
+  }
+}
+initSnow();
+
+function updateSnow() {
+  if(!snowToggle.checked) { ctx.clearRect(0,0,GAME_W,GAME_H); return; }
+  ctx.clearRect(0,0,GAME_W,GAME_H);
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  for(const s of snowflakes){
+    s.y += s.v;
+    s.x += s.drift;
+    if(s.y > GAME_H + 6){ s.y = -8; s.x = Math.random()*GAME_W; }
+    if(s.x < -8) s.x = GAME_W + 8;
+    if(s.x > GAME_W + 8) s.x = -8;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+/* run snow loop */
+function snowLoop(){
+  updateSnow();
+  requestAnimationFrame(snowLoop);
+}
+snowLoop();
+
+/* ===========================
+   Game core: spawn, fall, collision
+   =========================== */
+
+function applyLevel(level) {
+  const p = LevelPresets[level];
+  spawnInterval = p.spawnInterval;
+  fallSpeed = p.fallSpeed;
+  santaSize = Math.round(96 * p.santaScale);
+  santaEmojiSize = Math.round(70 * p.santaScale);
+  giftSize = p.giftSize;
+  lives = p.lives;
+  score = 0;
+  santaX = Math.max(6, Math.min(GAME_W - santaSize - 6, (GAME_W - santaSize)/2));
+  // apply sizes to sant element
+  santa.style.width = santaSize + 'px';
+  santa.style.height = santaSize + 'px';
+  santa.style.fontSize = santaEmojiSize + 'px';
+  santa.style.left = santaX + 'px';
+  scoreEl.textContent = '🎁 Score: ' + score;
+  livesEl.textContent = '❤ Lives: ' + lives;
+}
+
+/* Create a gift DOM element and animate it with requestAnimationFrame */
+function spawnGift() {
+  if(!active) return;
+  const g = document.createElement('div');
+  g.className = 'gift';
+  g.style.width = giftSize + 'px';
+  g.style.height = giftSize + 'px';
+  g.style.fontSize = Math.round(giftSize * 0.78) + 'px';
+  const emoji = giftEmojis[Math.floor(Math.random() * giftEmojis.length)];
+  g.innerText = emoji;
+
+  // horizontal position within bounds
+  const x = Math.floor(Math.random() * Math.max(1, GAME_W - giftSize - 8)) + 4;
+  let y = -giftSize - 12;
+  g.style.left = x + 'px';
+  g.style.top = y + 'px';
+  game.appendChild(g);
+
+  function fall() {
+    if(!active) { g.remove(); return; }
+    y += fallSpeed;
+    g.style.top = y + 'px';
+
+    // collision check near bottom
+    if(y > GAME_H - santaSize - 40) {
+      const giftLeft = x, giftRight = x + giftSize;
+      const santaLeft = santaX, santaRight = santaX + santaSize;
+      if(!(giftRight < santaLeft || giftLeft > santaRight)) {
+        // caught
+        score += 1;
+        scoreEl.textContent = '🎁 Score: ' + score;
+        if(soundToggle.checked) playCatch();
+        g.remove();
+        return;
+      }
+    }
+
+    // missed
+    if(y > GAME_H + 20) {
+      lives -= 1;
+      livesEl.textContent = '❤ Lives: ' + lives;
+      if(soundToggle.checked) playMiss();
+      g.remove();
+      if(lives <= 0) {
+        endGame();
+        return;
+      }
+      return;
+    }
+
+    requestAnimationFrame(fall);
+  }
+  requestAnimationFrame(fall);
+}
+
+/* spawner management */
+function startSpawner() {
+  if(spawnHandle) clearInterval(spawnHandle);
+  spawnHandle = setInterval(() => spawnGift(), spawnInterval);
+}
+function stopSpawner(){
+  if(spawnHandle) clearInterval(spawnHandle);
+  spawnHandle = null;
+}
+
+/* ===========================
+   Controls: keyboard + touch
+   =========================== */
+let moveAmount = 28; // how many px per move
+document.addEventListener('keydown', (e) => {
+  if(!active) return;
+  if(e.key === 'ArrowLeft' || e.key === 'a') {
+    santaX = Math.max(6, santaX - moveAmount);
+    santa.style.left = santaX + 'px';
+  } else if(e.key === 'ArrowRight' || e.key === 'd') {
+    santaX = Math.min(GAME_W - santaSize - 6, santaX + moveAmount);
+    santa.style.left = santaX + 'px';
+  }
+});
+
+/* Touch controls: tap left/right or drag */
+let touchStartX = null;
+game.addEventListener('touchstart', (ev) => {
+  const x = ev.touches[0].clientX - game.getBoundingClientRect().left;
+  touchStartX = x;
+  // immediate step
+  if(x < GAME_W/2) {
+    santaX = Math.max(6, santaX - moveAmount);
+  } else {
+    santaX = Math.min(GAME_W - santaSize - 6, santaX + moveAmount);
+  }
+  santa.style.left = santaX + 'px';
+});
+
+game.addEventListener('touchmove', (ev) => {
+  ev.preventDefault();
+  const x = ev.touches[0].clientX - game.getBoundingClientRect().left;
+  // smooth follow dragging
+  if(touchStartX !== null) {
+    const dx = x - touchStartX;
+    // change position gradually
+    santaX = Math.max(6, Math.min(GAME_W - santaSize - 6, santaX + dx * 0.14));
+    santa.style.left = santaX + 'px';
+    touchStartX = x;
+  }
+}, { passive:false });
+
+game.addEventListener('touchend', () => touchStartX = null);
+
+/* ===========================
+   Start / End game functions
+   =========================== */
+function startGame() {
+  active = true;
+  startMenu.style.display = 'none';
+  gameOverMenu.style.display = 'none';
+  applyLevel(chosenLevel);
+  startSpawner();
+  if(soundToggle.checked) playStart();
+  // ensure focus for keyboard
+  setTimeout(()=> game.focus(), 60);
+}
+
+function endGame() {
+  active = false;
+  stopSpawner();
+  // show game over with final score
+  document.getElementById('finalScore').textContent = 'Score: ' + score;
+  gameOverMenu.style.display = 'flex';
+}
+
+/* restart (play again same level) */
+function restartSame() {
+  // clear existing gifts
+  document.querySelectorAll('.gift').forEach(g => g.remove());
+  applyLevel(chosenLevel);
+  gameOverMenu.style.display = 'none';
+  active = true;
+  startSpawner();
+  if(soundToggle.checked) playStart();
+  setTimeout(()=> game.focus(), 60);
+}
+
+/* go to menu */
+function goHome() {
+  // clear gifts and show menu
+  document.querySelectorAll('.gift').forEach(g => g.remove());
+  stopSpawner();
+  active = false;
+  startMenu.style.display = 'flex';
+}
+
+/* ===========================
+   UI wiring
+   =========================== */
+startBtn.addEventListener('click', () => {
+  // get current selected level
+  startGame();
+});
+
+restartBtn.addEventListener('click', () => restartSame());
+homeBtn.addEventListener('click', () => goHome());
+
+levelBtns.forEach(b => {
+  b.addEventListener('click', (ev) => {
+    levelBtns.forEach(x=>x.classList.remove('active'));
+    ev.target.classList.add('active');
+    chosenLevel = ev.target.dataset.level;
+    // preview change in menu: adjust displayed sizes
+    const p = LevelPresets[chosenLevel];
+    // visually update santa in menu (not necessary, but we update live)
+    santa.style.width = Math.round(96 * p.santaScale) + 'px';
+    santa.style.height = Math.round(96 * p.santaScale) + 'px';
+    santa.style.fontSize = Math.round(70 * p.santaScale) + 'px';
+    // also update lives shown in HUD preview
+    livesEl.textContent = '❤ ' + p.lives;
+  });
+});
+
+/* sound toggle: resume context on first user interaction if needed */
+document.addEventListener('click', () => {
+  if(soundToggle.checked) ensureAudio();
+}, { once: true });
+
+/* snow toggle resets snow */
+snowToggle.addEventListener('change', () => {
+  if(snowToggle.checked) initSnow();
+});
+
+/* on menu load set default level preview */
+(function initMenuPreview(){
+  const el = document.querySelector('.levelBtn[data-level="normal"]');
+  if(el) { el.classList.add('active'); chosenLevel = 'normal'; }
+  const p = LevelPresets[chosenLevel];
+  santa.style.width = Math.round(96 * p.santaScale) + 'px';
+  santa.style.height = Math.round(96 * p.santaScale) + 'px';
+  santa.style.fontSize = Math.round(70 * p.santaScale) + 'px';
+  livesEl.textContent = '❤ ' + p.lives;
+})();
+
+/* ===========================
+   Small animation loop to keep sizes correct and update snow anchor
+   =========================== */
+function mainLoop(){
+  // ensure game rect / sizing in case of CSS scale
+  const rect = game.getBoundingClientRect();
+  GAME_W = Math.round(rect.width);
+  GAME_H = Math.round(rect.height);
+  // clamp santaX if screen resized
+  santaX = Math.max(6, Math.min(GAME_W - santaSize - 6, santaX));
+  santa.style.left = santaX + 'px';
+  // update snow drawing area if changed
+  if(snowCanvas.width !== GAME_W || snowCanvas.height !== GAME_H) {
+    snowCanvas.width = GAME_W; snowCanvas.height = GAME_H;
+    initSnow();
+  }
+  requestAnimationFrame(mainLoop);
+}
+mainLoop();
+
+</script>
+</body>
+</html>
